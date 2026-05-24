@@ -1,0 +1,18 @@
+services:
+  stocktradehistory:
+    image: chenpinetree/stocktradehistory:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: stocktradehistory
+    ports:
+      - "3737:3737"
+    environment:
+      - PORT=3737
+      - APP_DATA_DIR=/app/data
+    volumes:
+      - stocktradehistory_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  stocktradehistory_data:

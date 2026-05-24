@@ -1,0 +1,281 @@
+:root {
+  font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  color: #1f2937;
+  background: radial-gradient(circle at top left, #fff7db 0%, #f8fafc 48%, #f2f5ff 100%);
+  --bg-card: rgba(255, 255, 255, 0.82);
+  --bg-card-strong: #ffffff;
+  --border-soft: #e6eaf2;
+  --text-strong: #0f172a;
+  --text-muted: #64748b;
+  --accent-up: #d73d32;
+  --accent-down: #0f766e;
+  --profit-up: #2f855a;
+  --profit-down: #c53030;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --space-1: 8px;
+  --space-2: 16px;
+  --space-3: 24px;
+  --space-4: 32px;
+  --shadow-soft: 0 10px 26px rgba(15, 23, 42, 0.05);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.page {
+  width: 100%;
+  max-width: none;
+  margin: 0 auto;
+  padding: 24px 28px;
+}
+
+.summary-row {
+  margin-bottom: 16px;
+}
+
+.page-title {
+  margin-bottom: var(--space-2) !important;
+  color: var(--text-strong) !important;
+}
+
+.section-card {
+  margin-bottom: var(--space-2);
+  width: 100%;
+}
+
+.cost-card {
+  background: linear-gradient(180deg, #f4f9ff 0%, #eef6ff 100%);
+  border: 1px solid #d6e9ff;
+}
+
+.trade-list-card {
+  background: linear-gradient(180deg, #fffdf9 0%, #fff7ec 100%);
+  border: 1px solid #f3e1c7;
+}
+
+.module-card {
+  width: 100%;
+}
+
+.subsection-card {
+  margin-top: var(--space-2);
+}
+
+.subsection-table {
+  margin-top: var(--space-2);
+}
+
+.full-width {
+  width: 100%;
+}
+
+.holding-unmatched {
+  font-size: 13px;
+  color: var(--text-strong);
+}
+
+.filter-toolbar {
+  margin-bottom: 12px;
+  width: 100%;
+}
+
+.filter-control {
+  width: 180px;
+}
+
+.filter-control-xs {
+  width: 140px;
+}
+
+.filter-control-sm {
+  width: 160px;
+}
+
+.filter-control-md {
+  width: 220px;
+}
+
+.quote-card {
+  width: 100%;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-soft);
+  overflow: hidden;
+  box-shadow: var(--shadow-soft);
+}
+
+.quote-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  width: 100%;
+}
+
+.quote-sortable-item {
+  touch-action: none;
+  cursor: grab;
+}
+
+.quote-sortable-item:active {
+  cursor: grabbing;
+}
+
+.quote-sortable-item.is-dragging {
+  opacity: 0.8;
+  transform-origin: center center;
+  z-index: 20;
+}
+
+.quote-header {
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border-soft);
+  background: linear-gradient(180deg, var(--bg-card-strong), var(--bg-card));
+}
+
+.quote-name {
+  margin: 0 !important;
+}
+
+.quote-symbol {
+  font-size: 17px;
+  letter-spacing: 0.02em;
+}
+
+.quote-price {
+  font-size: 32px;
+  line-height: 1;
+  font-weight: 700;
+}
+
+.quote-change {
+  font-size: 24px;
+  line-height: 1.1;
+  font-weight: 600;
+}
+
+.quote-up {
+  color: var(--accent-up);
+}
+
+.quote-down {
+  color: var(--accent-down);
+}
+
+.quote-metrics-row {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.quote-metric-label {
+  color: var(--text-muted);
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.quote-metric-value {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.quote-chart-col {
+  border-right: 1px solid var(--border-soft);
+  padding: 12px 14px 0 14px;
+}
+
+.quote-period-switch {
+  text-align: right;
+  margin-bottom: 8px;
+}
+
+.quote-chart {
+  width: 100%;
+  height: 460px;
+}
+
+.quote-orderbook-col {
+  padding: 14px;
+}
+
+.orderbook-price {
+  color: var(--accent-down);
+}
+
+.quote-latest-btn {
+  margin-top: 16px;
+}
+
+.analysis-toolbar {
+  margin-bottom: 12px;
+}
+
+.analysis-search-input {
+  width: 280px;
+}
+
+.analysis-meta {
+  margin-bottom: 10px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.analysis-content {
+  white-space: pre-wrap;
+  line-height: 1.7;
+  font-size: 15px;
+  min-height: 180px;
+}
+
+.report-table .ant-btn-primary {
+  box-shadow: none;
+}
+
+.profit-up {
+  color: var(--profit-up);
+}
+
+.profit-down {
+  color: var(--profit-down);
+}
+
+@media (max-width: 1100px) {
+  .page {
+    padding: 16px;
+  }
+
+  .filter-control,
+  .filter-control-xs,
+  .filter-control-sm,
+  .filter-control-md,
+  .analysis-search-input {
+    width: 100%;
+    min-width: 180px;
+  }
+
+  .quote-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .quote-price {
+    font-size: 26px;
+  }
+
+  .quote-change {
+    font-size: 20px;
+  }
+}
+
+@media (min-width: 1600px) {
+  .page {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}
