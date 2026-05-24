@@ -26,10 +26,11 @@ npm start
 
 浏览器访问: `http://localhost:3737`
 
-## Docker 一键部署（单容器）
+## Docker 一键部署（单容器，仅拉成品镜像）
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 浏览器访问: `http://localhost:3737`
@@ -46,23 +47,30 @@ docker compose down
 chenpinetree/stocktradehistory:latest
 ```
 
-构建镜像:
+在发布机/开发机构建并推送镜像:
 
 ```bash
 npm run docker:build
+npm run docker:push
 ```
 
 ## 更新迭代流程
 
 1. 本地更新代码并提交到 GitHub。
-2. 在部署机拉取最新代码。
-3. 执行：
+2. 在发布机执行：
 
 ```bash
-docker compose up -d --build
+npm run docker:release
 ```
 
-这会重建并替换容器，实现软件更新。
+3. 在群晖/NAS 执行：
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+这会拉取最新成品镜像并替换容器，不在 NAS 本机构建。
 
 ## 备份与恢复
 

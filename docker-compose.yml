@@ -1,9 +1,6 @@
 services:
   stocktradehistory:
     image: chenpinetree/stocktradehistory:latest
-    build:
-      context: .
-      dockerfile: Dockerfile
     container_name: stocktradehistory
     ports:
       - "3737:3737"
