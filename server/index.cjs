@@ -2,8 +2,10 @@ const http = require("node:http");
 const path = require("node:path");
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
+const crypto = require("node:crypto");
 const { URL } = require("node:url");
 const { initDb, createTrade, createTradesBulk, updateTrade, deleteTrade, clearAllTrades, listTrades, saveSettings, getSettings, computeSummary, listSellMatches, parseImageWithAI, parseFileWithAI, saveAiReport, listAiReports, deleteAiReport, exportBackupData, importBackupData } = require("../electron/services.cjs");
+const { hasAppPassword, setupAppPassword, verifyAppPassword, changeAppPassword } = require("../electron/services.cjs");
 const { fetchAndParseData, searchStocks, fetchF10Bundle, getMoneyFlowHistory, extractTdxFeatures } = require("../electron/stock-core.cjs");
 
 const PORT = Number(process.env.PORT || 3737);
@@ -13,6 +15,7 @@ const DB_PATH = process.env.DB_PATH || path.join(APP_DATA_DIR, "trade-history.db
 const DIST_DIR = path.join(process.cwd(), "dist");
 
 const stockCache = new Map();
+const authSessions = new Map();
 const STOCK_CACHE_TTL_MS = 60 * 1000;
 const STOCK_CACHE_MAX = 300;
 
@@ -30,6 +33,32 @@ function json(res, status, data) {
     "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
   });
   res.end(body);
+}
+
+function getSessionToken(req) {
+  const h = String(req.headers["x-app-session"] || "").trim();
+  return h || null;
+}
+
+function isAuthorized(req) {
+  if (!hasAppPassword()) return true;
+  const token = getSessionToken(req);
+  if (!token) return false;
+  const exp = authSessions.get(token);
+  if (!exp || Date.now() > exp) {
+    authSessions.delete(token);
+    return false;
+  }
+  authSessions.set(token, Date.now() + 1000 * 60 * 60 * 12);
+  return true;
+}
+
+function ensureAuthorized(req) {
+  if (!isAuthorized(req)) {
+    const e = new Error("未登录或会话已过期");
+    e.statusCode = 401;
+    throw e;
+  }
 }
 
 function notFound(res) {
@@ -140,6 +169,43 @@ async function handleApi(req, res, urlObj) {
   }
 
   if (p === "/api/health" && req.method === "GET") return json(res, 200, { ok: true });
+  if (p === "/api/auth/status" && req.method === "GET") {
+    const enabled = hasAppPassword();
+    return json(res, 200, { enabled, authenticated: isAuthorized(req) });
+  }
+  if (p === "/api/auth/setup" && req.method === "POST") {
+    const body = await readJsonBody(req);
+    setupAppPassword(String(body?.password || ""));
+    const token = crypto.randomBytes(24).toString("hex");
+    authSessions.set(token, Date.now() + 1000 * 60 * 60 * 12);
+    return json(res, 200, { ok: true, sessionToken: token });
+  }
+  if (p === "/api/auth/login" && req.method === "POST") {
+    const body = await readJsonBody(req);
+    const ok = verifyAppPassword(String(body?.password || ""));
+    if (!ok) {
+      const e = new Error("密码错误");
+      e.statusCode = 401;
+      throw e;
+    }
+    const token = crypto.randomBytes(24).toString("hex");
+    authSessions.set(token, Date.now() + 1000 * 60 * 60 * 12);
+    return json(res, 200, { ok: true, sessionToken: token });
+  }
+  if (p === "/api/auth/logout" && req.method === "POST") {
+    const token = getSessionToken(req);
+    if (token) authSessions.delete(token);
+    return json(res, 200, { ok: true });
+  }
+  if (p === "/api/auth/change-password" && req.method === "POST") {
+    ensureAuthorized(req);
+    const body = await readJsonBody(req);
+    const result = changeAppPassword(String(body?.oldPassword || ""), String(body?.newPassword || ""));
+    return json(res, 200, result);
+  }
+
+  ensureAuthorized(req);
+
   if (p === "/api/settings/get" && req.method === "GET") return json(res, 200, getSettings());
   if (p === "/api/settings/save" && req.method === "POST") return json(res, 200, saveSettings(await readJsonBody(req)));
 
@@ -313,6 +379,11 @@ async function start() {
       }
       notFound(res);
     } catch (e) {
+      if (e && typeof e === "object" && "statusCode" in e) {
+        const statusCode = Number(e.statusCode) || 500;
+        json(res, statusCode, { error: e instanceof Error ? e.message : String(e) });
+        return;
+      }
       json(res, 500, { error: e instanceof Error ? e.message : String(e) });
     }
   });

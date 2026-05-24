@@ -1,4 +1,20 @@
 type JsonValue = Record<string, unknown>;
+const SESSION_KEY = "stocktradehistory_session_token";
+
+function getSessionToken() {
+  try {
+    return localStorage.getItem(SESSION_KEY) || "";
+  } catch (_e) {
+    return "";
+  }
+}
+
+function setSessionToken(token: string) {
+  try {
+    if (!token) localStorage.removeItem(SESSION_KEY);
+    else localStorage.setItem(SESSION_KEY, token);
+  } catch (_e) {}
+}
 
 function errText(payload: unknown) {
   if (payload && typeof payload === "object" && "error" in payload) {
@@ -8,9 +24,13 @@ function errText(payload: unknown) {
 }
 
 async function post(path: string, payload?: JsonValue) {
+  const token = getSessionToken();
   const res = await fetch(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { "x-app-session": token } : {}),
+    },
     body: JSON.stringify(payload || {}),
   });
   const data = await res.json().catch(() => ({}));
@@ -19,7 +39,10 @@ async function post(path: string, payload?: JsonValue) {
 }
 
 async function get(path: string) {
-  const res = await fetch(path);
+  const token = getSessionToken();
+  const res = await fetch(path, {
+    headers: token ? { "x-app-session": token } : {},
+  });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(errText(data));
   return data;
@@ -102,5 +125,22 @@ export function installWebApiShim() {
         data,
       });
     },
+    authStatus: () => get("/api/auth/status"),
+    setupPassword: async (payload) => {
+      const res = await post("/api/auth/setup", payload as unknown as JsonValue);
+      setSessionToken(String(res?.sessionToken || ""));
+      return res;
+    },
+    login: async (payload) => {
+      const res = await post("/api/auth/login", payload as unknown as JsonValue);
+      setSessionToken(String(res?.sessionToken || ""));
+      return res;
+    },
+    logout: async () => {
+      const res = await post("/api/auth/logout", {});
+      setSessionToken("");
+      return res;
+    },
+    changePassword: (payload) => post("/api/auth/change-password", payload as unknown as JsonValue),
   } as Window["api"];
 }

@@ -141,6 +141,11 @@ declare global {
         skippedReports?: number;
         replaced?: boolean;
       }>;
+      authStatus: () => Promise<{ enabled: boolean; authenticated: boolean }>;
+      setupPassword: (payload: { password: string }) => Promise<{ ok: boolean; sessionToken: string }>;
+      login: (payload: { password: string }) => Promise<{ ok: boolean; sessionToken: string }>;
+      logout: () => Promise<{ ok: boolean }>;
+      changePassword: (payload: { oldPassword: string; newPassword: string }) => Promise<{ ok: boolean }>;
     };
   }
 }
@@ -258,6 +263,17 @@ function App() {
   const [reports, setReports] = useState<AiReport[]>([]);
   const [marketSearchOptions, setMarketSearchOptions] = useState<StockSearchItem[]>([]);
   const [marketSearching, setMarketSearching] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [passwordEnabled, setPasswordEnabled] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [passwordInput, setPasswordInput] = useState("");
+  const [newPasswordInput, setNewPasswordInput] = useState("");
+  const [newPasswordConfirm, setNewPasswordConfirm] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+  const [changePwdOpen, setChangePwdOpen] = useState(false);
+  const [changePwdOld, setChangePwdOld] = useState("");
+  const [changePwdNew, setChangePwdNew] = useState("");
+  const [changePwdConfirm, setChangePwdConfirm] = useState("");
   const [holdingOrder, setHoldingOrder] = useState<string[]>([]);
   const [draggingSymbol, setDraggingSymbol] = useState<string | null>(null);
   const dragSourceRef = useRef<string | null>(null);
@@ -384,15 +400,105 @@ function App() {
     aiForm.setFieldsValue({ active_ai_profile_id: s.active_ai_profile_id });
   };
 
-  useEffect(() => {
-    refresh().catch((e) => message.error(String(e)));
-  }, []);
+  const bootstrapAuth = async () => {
+    const api = getApi();
+    const status = await api.authStatus();
+    setPasswordEnabled(Boolean(status.enabled));
+    setIsAuthenticated(!status.enabled || Boolean(status.authenticated));
+    setAuthChecked(true);
+    if (!status.enabled || status.authenticated) {
+      await refresh();
+      const rows = await api.listAIReports({});
+      setReports(rows);
+    }
+  };
+
+  const onSetupPassword = async () => {
+    if (newPasswordInput.length < 6) throw new Error("密码至少 6 位");
+    if (newPasswordInput !== newPasswordConfirm) throw new Error("两次输入的新密码不一致");
+    setAuthLoading(true);
+    try {
+      await getApi().setupPassword({ password: newPasswordInput });
+      setPasswordEnabled(true);
+      setIsAuthenticated(true);
+      setNewPasswordInput("");
+      setNewPasswordConfirm("");
+      await refresh();
+      const rows = await getApi().listAIReports({});
+      setReports(rows);
+      message.success("主密码设置成功");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const onSkipPasswordSetup = async () => {
+    setAuthLoading(true);
+    try {
+      setPasswordEnabled(false);
+      setIsAuthenticated(true);
+      setNewPasswordInput("");
+      setNewPasswordConfirm("");
+      await refresh();
+      const rows = await getApi().listAIReports({});
+      setReports(rows);
+      message.success("已跳过主密码设置，当前为免密码进入");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const onLogin = async () => {
+    if (!passwordInput) throw new Error("请输入密码");
+    setAuthLoading(true);
+    try {
+      await getApi().login({ password: passwordInput });
+      setIsAuthenticated(true);
+      setPasswordInput("");
+      await refresh();
+      const rows = await getApi().listAIReports({});
+      setReports(rows);
+      message.success("解锁成功");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const onLogout = async () => {
+    await getApi().logout();
+    setIsAuthenticated(false);
+    setTrades([]);
+    setSellMatches([]);
+    setReports([]);
+    setQuotes({});
+    message.success("已锁定");
+  };
+
+  const onChangePassword = async () => {
+    if (!changePwdOld) throw new Error("请输入旧密码");
+    if (!changePwdNew && !changePwdConfirm) {
+      await getApi().changePassword({ oldPassword: changePwdOld, newPassword: "" });
+      setPasswordEnabled(false);
+      setChangePwdOpen(false);
+      setChangePwdOld("");
+      setChangePwdNew("");
+      setChangePwdConfirm("");
+      message.success("已删除登录密码，后续可免密码进入");
+      return;
+    }
+    if (!changePwdNew || !changePwdConfirm) throw new Error("请完整填写新密码和确认新密码，或都留空以删除密码");
+    if (changePwdNew.length < 6) throw new Error("新密码至少 6 位");
+    if (changePwdNew !== changePwdConfirm) throw new Error("两次输入的新密码不一致");
+    await getApi().changePassword({ oldPassword: changePwdOld, newPassword: changePwdNew });
+    setChangePwdOpen(false);
+    setChangePwdOld("");
+    setChangePwdNew("");
+    setChangePwdConfirm("");
+    message.success("主密码已更新");
+  };
 
   useEffect(() => {
-    getApi()
-      .listAIReports({})
-      .then((rows) => setReports(rows))
-      .catch(() => {});
+    bootstrapAuth().catch((e) => message.error(String(e)));
   }, []);
 
   useEffect(() => {
@@ -956,6 +1062,16 @@ function App() {
 
   const settingsMenuItems = [
     {
+      key: "lock-app",
+      label: "立即锁定",
+      onClick: () => onLogout().catch((e) => message.error(errText(e))),
+    },
+    {
+      key: "change-password",
+      label: "修改主密码",
+      onClick: () => setChangePwdOpen(true),
+    },
+    {
       key: "backup-export",
       label: "数据备份(JSON)",
       onClick: () => onExportBackupJson().catch((e) => message.error(errText(e))),
@@ -982,9 +1098,60 @@ function App() {
     },
   ];
 
+  if (!authChecked) {
+    return (
+      <div className="page">
+        <Card title="正在检查访问权限" style={{ maxWidth: 520, margin: "8vh auto 0" }}>
+          <Typography.Text type="secondary">请稍候...</Typography.Text>
+        </Card>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="page">
+        <Card title={passwordEnabled ? "输入主密码解锁" : "首次设置主密码"} style={{ maxWidth: 520, margin: "8vh auto 0" }}>
+          <Space direction="vertical" className="full-width" size={14}>
+            {passwordEnabled ? (
+              <>
+                <Input.Password
+                  placeholder="输入主密码"
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  onPressEnter={() => onLogin().catch((e) => message.error(errText(e)))}
+                />
+                <Button type="primary" loading={authLoading} onClick={() => onLogin().catch((e) => message.error(errText(e)))}>
+                  解锁
+                </Button>
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="忘记密码重置"
+                  description="保留交易数据的前提下，可在宿主机数据目录对应的 SQLite 中清空 app_password_hash、app_password_salt 并将 app_lock_enabled 设为0。"
+                />
+              </>
+            ) : (
+              <>
+                <Input.Password placeholder="设置主密码（至少6位）" value={newPasswordInput} onChange={(e) => setNewPasswordInput(e.target.value)} />
+                <Input.Password placeholder="再次输入主密码" value={newPasswordConfirm} onChange={(e) => setNewPasswordConfirm(e.target.value)} />
+                <Button type="primary" loading={authLoading} onClick={() => onSetupPassword().catch((e) => message.error(errText(e)))}>
+                  确认设置并进入
+                </Button>
+                <Button loading={authLoading} onClick={() => onSkipPasswordSetup().catch((e) => message.error(errText(e)))}>
+                  免密码进入
+                </Button>
+              </>
+            )}
+          </Space>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="page">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+      <div className="page-header">
         <Typography.Title level={2} className="page-title">股票交易历史本地管理</Typography.Title>
         <Dropdown menu={{ items: settingsMenuItems }} trigger={["click"]}>
           <Button>设置</Button>
@@ -992,15 +1159,15 @@ function App() {
       </div>
 
       <Row gutter={16} className="summary-row">
-        <Col span={4}><Card><Statistic title="起始本金" value={summary.initialCapital} precision={2} /></Card></Col>
-        <Col span={5}><Card><Statistic title="已实现盈亏" value={summary.realizedPnl} precision={2} valueStyle={{ color: summary.realizedPnl >= 0 ? "#2f855a" : "#c53030" }} /></Card></Col>
-        <Col span={5}><Card><Statistic title="未实现盈亏" value={unrealizedPnl} precision={2} valueStyle={{ color: unrealizedPnl >= 0 ? "#2f855a" : "#c53030" }} /></Card></Col>
-        <Col span={5}><Card><Statistic title="累计手续费" value={summary.totalFees} precision={2} /></Card></Col>
-        <Col span={5}><Card><Statistic title="总盈亏（含持仓）" value={totalPnlWithUnrealized} precision={2} valueStyle={{ color: totalPnlWithUnrealized >= 0 ? "#2f855a" : "#c53030" }} /></Card></Col>
+        <Col xs={24} sm={12} lg={4}><Card><Statistic title="起始本金" value={summary.initialCapital} precision={2} /></Card></Col>
+        <Col xs={24} sm={12} lg={5}><Card><Statistic title="已实现盈亏" value={summary.realizedPnl} precision={2} valueStyle={{ color: summary.realizedPnl >= 0 ? "#2f855a" : "#c53030" }} /></Card></Col>
+        <Col xs={24} sm={12} lg={5}><Card><Statistic title="未实现盈亏" value={unrealizedPnl} precision={2} valueStyle={{ color: unrealizedPnl >= 0 ? "#2f855a" : "#c53030" }} /></Card></Col>
+        <Col xs={24} sm={12} lg={5}><Card><Statistic title="累计手续费" value={summary.totalFees} precision={2} /></Card></Col>
+        <Col xs={24} sm={24} lg={5}><Card><Statistic title="总盈亏（含持仓）" value={totalPnlWithUnrealized} precision={2} valueStyle={{ color: totalPnlWithUnrealized >= 0 ? "#2f855a" : "#c53030" }} /></Card></Col>
       </Row>
 
        <Card title="当前持仓（按买入成本）" className="section-card">
-         <Table
+         <Table<HoldingItem>
            rowKey="symbol"
            pagination={false}
            dataSource={summary.holdings}
@@ -1008,20 +1175,22 @@ function App() {
              { title: "股票代码", dataIndex: "symbol" },
              { title: "股票名称", dataIndex: "security_name" },
              { title: "数量", dataIndex: "quantity" },
-             { title: "总市值(成本)", dataIndex: "total_value", render: (v: number) => fmtMoney(v) },
+              { title: "总市值(成本)", dataIndex: "total_value", render: (v: number) => fmtMoney(v), responsive: ["md"] },
              {
-               title: "现价",
-               render: (_: unknown, h: { symbol: string }) => {
-                 const q = quotes[h.symbol];
-                 return q && Number.isFinite(q.price) ? fmtMoney(q.price) : "--";
-               },
-             },
+                title: "现价",
+                render: (_: unknown, h: { symbol: string }) => {
+                  const q = quotes[h.symbol];
+                  return q && Number.isFinite(q.price) ? fmtMoney(q.price) : "--";
+                },
+                responsive: ["sm"],
+              },
               {
                 title: "参考市值",
                 render: (_: unknown, h: { symbol: string; quantity: number }) => {
                   const q = quotes[h.symbol];
                   return q && Number.isFinite(q.price) ? fmtMoney(q.price * h.quantity) : "--";
                 },
+                responsive: ["lg"],
               },
               {
                 title: "最低未抵扣买入 (至少2笔)",
@@ -1038,11 +1207,13 @@ function App() {
                     </span>
                   );
                 },
+                responsive: ["md"],
               },
-           ]}
-           locale={{ emptyText: "暂无持仓" }}
-         />
-       </Card>
+            ]}
+            scroll={{ x: "max-content" }}
+            locale={{ emptyText: "暂无持仓" }}
+          />
+        </Card>
 
        <Card
           title="成本利润计算"
@@ -1066,19 +1237,19 @@ function App() {
              </Button>
            ))}
          </Space>
-         <Table
+         <Table<CostTrade>
             rowKey="trade_id"
             pagination={{ pageSize: 10 }}
             dataSource={sortedCostTrades}
             columns={[
-             { title: "买入日期", dataIndex: "trade_date" },
-             { title: "买入时间", dataIndex: "trade_time" },
-             { title: "代码", dataIndex: "symbol" },
-             { title: "名称", dataIndex: "security_name" },
-             { title: "买入成交编号", dataIndex: "trade_no", render: (v: string) => v || "-" },
-             { title: "买入价", dataIndex: "buy_price", render: (v: number) => fmtMoney(v) },
-             { title: "未抵扣数量", dataIndex: "remaining_qty" },
-             { title: "保本卖价", dataIndex: "breakeven_sell_price", render: (v: number) => fmtMoney(v) },
+              { title: "买入日期", dataIndex: "trade_date" },
+              { title: "买入时间", dataIndex: "trade_time", responsive: ["md"] },
+              { title: "代码", dataIndex: "symbol" },
+              { title: "名称", dataIndex: "security_name" },
+              { title: "买入成交编号", dataIndex: "trade_no", render: (v: string) => v || "-", responsive: ["lg"] },
+              { title: "买入价", dataIndex: "buy_price", render: (v: number) => fmtMoney(v) },
+              { title: "未抵扣数量", dataIndex: "remaining_qty" },
+              { title: "保本卖价", dataIndex: "breakeven_sell_price", render: (v: number) => fmtMoney(v) },
              {
                title: "卖出价格",
                render: (_v: unknown, r: CostTrade) => (
@@ -1102,10 +1273,11 @@ function App() {
                  return <span style={{ color }}>{fmtMoney(pnl)}</span>;
                 },
              },
-           ]}
-           locale={{ emptyText: "暂无未抵扣成本条目" }}
-         />
-       </Card>
+            ]}
+            scroll={{ x: "max-content" }}
+            locale={{ emptyText: "暂无未抵扣成本条目" }}
+          />
+        </Card>
 
       <Tabs
         activeKey={activeTab}
@@ -1143,18 +1315,19 @@ function App() {
                     onChange={(v) => setFilters((s) => ({ ...s, deducted: v || "" }))}
                   />
                 </Space>
-                <Table rowKey="id" dataSource={filteredTrades} columns={[
+                <Table<Trade> rowKey="id" dataSource={filteredTrades} scroll={{ x: "max-content" }} columns={[
                   { title: "日期", dataIndex: "trade_date" },
-                  { title: "时间", dataIndex: "trade_time" },
+                  { title: "时间", dataIndex: "trade_time", responsive: ["md"] },
                   { title: "代码", dataIndex: "symbol" },
                   { title: "名称", dataIndex: "security_name" },
-                  { title: "成交编号", dataIndex: "trade_no", render: (v: string) => v || "-" },
+                  { title: "成交编号", dataIndex: "trade_no", render: (v: string) => v || "-", responsive: ["lg"] },
                   { title: "买卖", dataIndex: "side", render: (v: Side) => <Tag color={v === "BUY" ? "blue" : "volcano"}>{v === "BUY" ? "买入" : "卖出"}</Tag> },
                   { title: "价格", dataIndex: "price", render: (v: number) => fmtMoney(v) },
                   { title: "数量", dataIndex: "quantity" },
-                  { title: "成交金额", dataIndex: "amount", render: (v: number) => fmtMoney(v) },
+                  { title: "成交金额", dataIndex: "amount", render: (v: number) => fmtMoney(v), responsive: ["md"] },
                   {
                     title: "未抵扣数量",
+                    responsive: ["lg"],
                     render: (_v: unknown, r: Trade) => {
                       if (r.side !== "BUY") return "-";
                       const remaining = Number(r.quantity || 0) - Number(r.matched_qty || 0);
@@ -1163,13 +1336,14 @@ function App() {
                   },
                   {
                     title: "已抵扣",
+                    responsive: ["lg"],
                     render: (_v: unknown, r: Trade) => {
                       if (r.side !== "BUY") return "-";
                       const remaining = Number(r.quantity || 0) - Number(r.matched_qty || 0);
                       return remaining <= 0 ? "是" : "否";
                     },
                   },
-                  { title: "手续费", dataIndex: "fee", render: (v: number) => fmtMoney(v) },
+                  { title: "手续费", dataIndex: "fee", render: (v: number) => fmtMoney(v), responsive: ["lg"] },
                   { title: "操作", render: (_v: unknown, r: Trade) => <Button size="small" onClick={() => openEdit(r)}>编辑</Button> },
                 ]} />
 
@@ -1212,7 +1386,7 @@ function App() {
                               ["量/换", q ? `${q.volumeHands.toFixed(2)}手/${q.turnover.toFixed(2)}%` : "--"],
                               ["主力净额", q ? fmtMoney(q.mainNetInflow) : "--"],
                             ].map(([k, v]) => (
-                              <Col key={String(k)} span={4}>
+                              <Col key={String(k)} xs={8} sm={8} md={4}>
                                 <div className="quote-metric-label">{k}</div>
                                 <div className="quote-metric-value">{typeof v === "number" ? fmtMoney(v) : v}</div>
                               </Col>
@@ -1220,7 +1394,7 @@ function App() {
                           </Row>
 
                           <Row>
-                            <Col span={17} className="quote-chart-col">
+                            <Col xs={24} lg={17} className="quote-chart-col">
                               <div className="quote-period-switch">
                                 <Space size={8}>
                                   <Button size="small" type={(periods[h.symbol] || "day") === "timeline" ? "primary" : "default"} onClick={() => switchPeriod(h.symbol, "timeline").catch((e) => message.error(String(e)))}>分时</Button>
@@ -1230,8 +1404,8 @@ function App() {
                               </div>
                               <div ref={(el) => { chartRefs.current[h.symbol] = el; }} className="quote-chart" />
                             </Col>
-                            <Col span={7} className="quote-orderbook-col">
-                              <Table
+                            <Col xs={24} lg={7} className="quote-orderbook-col">
+                              <Table<{ side: string; price: number; vol: number }>
                                 size="small"
                                 pagination={false}
                                 rowKey={(_r, i) => `lv-${i}`}
@@ -1241,6 +1415,7 @@ function App() {
                                   { title: "价格", dataIndex: "price", render: (v: number) => (v ? <span className="orderbook-price">{fmtMoney(v)}</span> : "--") },
                                   { title: "量", dataIndex: "vol" },
                                 ]}
+                                scroll={{ x: "max-content" }}
                               />
                               <Button block className="quote-latest-btn" disabled>最新成交</Button>
                             </Col>
@@ -1259,7 +1434,7 @@ function App() {
             label: "交易录入",
             children: (
               <Row gutter={16}>
-                <Col span={10}>
+                <Col xs={24} lg={10}>
                   <Card title="手动录入">
                     <Form
                       form={tradeForm}
@@ -1338,7 +1513,7 @@ function App() {
                     </Form>
                   </Card>
                 </Col>
-                <Col span={14}>
+                <Col xs={24} lg={14}>
                   <Card title="AI 识别导入">
                     <Space direction="vertical" className="full-width">
                       <Alert type="info" showIcon message="支持粘贴截图、上传截图、上传xls/xlsx/csv文件识别。识别后可确认入库。" />
@@ -1346,22 +1521,23 @@ function App() {
                         <Upload {...uploadProps}><Button loading={uploading}>上传截图识别</Button></Upload>
                         <Upload {...fileUploadProps}><Button loading={fileUploading}>上传文件识别</Button></Upload>
                       </Space>
-                      <Table
+                      <Table<AiRow>
                         rowKey={(_r, i) => String(i)}
                         dataSource={aiRows}
                         pagination={false}
                         size="small"
                         columns={[
                           { title: "日期", dataIndex: "trade_date" },
-                          { title: "时间", dataIndex: "trade_time" },
+                          { title: "时间", dataIndex: "trade_time", responsive: ["md"] },
                           { title: "代码", dataIndex: "symbol" },
                           { title: "名称", dataIndex: "security_name" },
-                          { title: "成交编号", dataIndex: "trade_no", render: (v: string) => v || "" },
+                          { title: "成交编号", dataIndex: "trade_no", render: (v: string) => v || "", responsive: ["lg"] },
                           { title: "方向", dataIndex: "side" },
                           { title: "价格", dataIndex: "price" },
                           { title: "数量", dataIndex: "quantity" },
-                          { title: "成交金额", dataIndex: "amount", render: (v: number) => (v ? fmtMoney(v) : "") },
+                          { title: "成交金额", dataIndex: "amount", render: (v: number) => (v ? fmtMoney(v) : ""), responsive: ["md"] },
                         ]}
+                        scroll={{ x: "max-content" }}
                       />
                       <Button type="primary" disabled={!canImport} onClick={() => onImportAiRows().catch((e) => message.error(String(e)))}>确认入库</Button>
                     </Space>
@@ -1386,14 +1562,14 @@ function App() {
                   <Button onClick={() => searchForAnalysis().catch((e) => message.error(String(e)))}>搜索</Button>
                 </Space>
 
-                <Table
+                <Table<StockSearchItem>
                   rowKey="code"
                   pagination={false}
                   dataSource={analysisTargets}
                   columns={[
                     { title: "代码", dataIndex: "code" },
                     { title: "名称", dataIndex: "name" },
-                    { title: "市场", dataIndex: "market" },
+                    { title: "市场", dataIndex: "market", responsive: ["md"] },
                     {
                       title: "操作",
                       render: (_: unknown, r: StockSearchItem) => (
@@ -1405,6 +1581,7 @@ function App() {
                       ),
                     },
                   ]}
+                  scroll={{ x: "max-content" }}
                 />
 
                 <Card size="small" title="分析报告" className="subsection-card">
@@ -1419,14 +1596,14 @@ function App() {
                 </Card>
 
                 <Card size="small" title="历史报告" className="subsection-card">
-                  <Table
+                  <Table<AiReport>
                     className="report-table"
                     rowKey="id"
                     pagination={{ pageSize: 6 }}
                     dataSource={reports}
                     columns={[
-                      { title: "时间", dataIndex: "created_at", render: (v: string) => fmtLocalReportTime(v) },
-                      { title: "类型", dataIndex: "analysis_type", render: (v: string) => (v === "f10" ? "全解分析" : "盘口分析") },
+                      { title: "时间", dataIndex: "created_at", render: (v: string) => fmtLocalReportTime(v), responsive: ["md"] },
+                      { title: "类型", dataIndex: "analysis_type", render: (v: string) => (v === "f10" ? "全解分析" : "盘口分析"), responsive: ["sm"] },
                       { title: "股票", render: (_: unknown, r: AiReport) => `${r.name || ""}(${r.code})` },
                       {
                         title: "查看",
@@ -1438,6 +1615,7 @@ function App() {
                         ),
                       },
                     ]}
+                    scroll={{ x: "max-content" }}
                   />
                 </Card>
               </Card>
@@ -1448,23 +1626,24 @@ function App() {
             label: "卖出配对明细",
             children: (
               <Card title="最低买价优先配对明细">
-                <Table
+                <Table<SellMatch>
                   rowKey="id"
                   dataSource={sellMatches}
                   columns={[
                     { title: "卖出日期", dataIndex: "sell_trade_date" },
-                    { title: "卖出时间", dataIndex: "sell_trade_time" },
-                    { title: "卖出成交编号", dataIndex: "sell_trade_no", render: (v: string) => v || "-" },
+                    { title: "卖出时间", dataIndex: "sell_trade_time", responsive: ["md"] },
+                    { title: "卖出成交编号", dataIndex: "sell_trade_no", render: (v: string) => v || "-", responsive: ["lg"] },
                     { title: "代码", dataIndex: "symbol" },
                     { title: "名称", dataIndex: "security_name" },
-                    { title: "买入成交编号", dataIndex: "buy_trade_no", render: (v: string) => v || "-" },
+                    { title: "买入成交编号", dataIndex: "buy_trade_no", render: (v: string) => v || "-", responsive: ["lg"] },
                     { title: "买入价", dataIndex: "buy_price", render: (v: number) => fmtMoney(v) },
                     { title: "卖出价", dataIndex: "sell_price", render: (v: number) => fmtMoney(v) },
                     { title: "配对数量", dataIndex: "matched_qty" },
-                    { title: "毛利润", dataIndex: "gross_profit", render: (v: number) => fmtMoney(v) },
-                    { title: "分摊手续费", dataIndex: "allocated_fee", render: (v: number) => fmtMoney(v) },
+                    { title: "毛利润", dataIndex: "gross_profit", render: (v: number) => fmtMoney(v), responsive: ["md"] },
+                    { title: "分摊手续费", dataIndex: "allocated_fee", render: (v: number) => fmtMoney(v), responsive: ["lg"] },
                     { title: "净利润", dataIndex: "net_profit", render: (v: number) => <span className={v >= 0 ? "profit-up" : "profit-down"}>{v.toFixed(2)}</span> },
                   ]}
+                  scroll={{ x: "max-content" }}
                 />
               </Card>
             ),
@@ -1525,7 +1704,7 @@ function App() {
             </Form>
           </Card>
 
-          <Table
+          <Table<AiProfile>
             className="subsection-table"
             rowKey="id"
             pagination={false}
@@ -1533,11 +1712,27 @@ function App() {
             columns={[
               { title: "名称", dataIndex: "name" },
               { title: "Model", dataIndex: "model" },
-              { title: "Base URL", dataIndex: "base_url" },
+              { title: "Base URL", dataIndex: "base_url", responsive: ["md"] },
               { title: "操作", render: (_: unknown, r: AiProfile) => <Button danger size="small" onClick={() => onDeleteAiProfile(r.id).catch((e) => message.error(String(e)))}>删除</Button> },
             ]}
+            scroll={{ x: "max-content" }}
           />
         </Card>
+      </Modal>
+
+      <Modal
+        title="修改主密码"
+        open={changePwdOpen}
+        onCancel={() => setChangePwdOpen(false)}
+        onOk={() => onChangePassword().catch((e) => message.error(errText(e)))}
+        okText="确认修改"
+      >
+        <Space direction="vertical" className="full-width" size={10}>
+          <Input.Password placeholder="旧密码" value={changePwdOld} onChange={(e) => setChangePwdOld(e.target.value)} />
+          <Input.Password placeholder="新密码（至少6位）" value={changePwdNew} onChange={(e) => setChangePwdNew(e.target.value)} />
+          <Input.Password placeholder="确认新密码" value={changePwdConfirm} onChange={(e) => setChangePwdConfirm(e.target.value)} />
+          <Typography.Text type="secondary">留空“新密码”和“确认新密码”并提交，可删除登录密码（免密码进入）。</Typography.Text>
+        </Space>
       </Modal>
 
       <Modal

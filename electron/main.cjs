@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("node:path");
 const os = require("node:os");
 const fs = require("node:fs");
-const { initDb, createTrade, createTradesBulk, updateTrade, deleteTrade, clearAllTrades, listTrades, saveSettings, getSettings, computeSummary, listSellMatches, parseImageWithAI, parseFileWithAI, saveAiReport, listAiReports, deleteAiReport, exportBackupData, importBackupData } = require("./services.cjs");
+const { initDb, createTrade, createTradesBulk, updateTrade, deleteTrade, clearAllTrades, listTrades, saveSettings, getSettings, computeSummary, listSellMatches, parseImageWithAI, parseFileWithAI, saveAiReport, listAiReports, deleteAiReport, exportBackupData, importBackupData, hasAppPassword, setupAppPassword, verifyAppPassword, changeAppPassword } = require("./services.cjs");
 const { fetchAndParseData, searchStocks, fetchF10Bundle, getMoneyFlowHistory, extractTdxFeatures } = require("./stock-core.cjs");
 
 let mainWindow = null;
@@ -10,6 +10,7 @@ const stockCache = new Map();
 const DEV_SERVER_URL = process.env.ELECTRON_RENDERER_URL || "http://localhost:5173";
 const STOCK_CACHE_TTL_MS = 60 * 1000;
 const STOCK_CACHE_MAX = 300;
+let appUnlocked = false;
 
 function looksBrokenName(name) {
   const s = String(name || "").trim();
@@ -85,6 +86,15 @@ function secureHandle(channel, handler) {
   });
 }
 
+function secureHandleProtected(channel, handler) {
+  secureHandle(channel, (event, payload) => {
+    if (hasAppPassword() && !appUnlocked) {
+      throw new Error("未登录或会话已过期");
+    }
+    return handler(event, payload);
+  });
+}
+
 function getStockCache(key) {
   const item = stockCache.get(key);
   if (!item) return null;
@@ -112,26 +122,49 @@ app.whenReady().then(() => {
   const dbPath = path.join(dbDir, "trade-history.db");
   initDb(dbPath);
 
-  secureHandle("settings:get", () => getSettings());
-  secureHandle("settings:save", (_event, payload) => saveSettings(payload));
+  secureHandle("auth:status", () => {
+    const enabled = hasAppPassword();
+    return { enabled, authenticated: !enabled || appUnlocked };
+  });
+  secureHandle("auth:setup", (_event, payload) => {
+    const result = setupAppPassword(String(payload?.password || ""));
+    appUnlocked = true;
+    return result;
+  });
+  secureHandle("auth:login", (_event, payload) => {
+    const ok = verifyAppPassword(String(payload?.password || ""));
+    if (!ok) throw new Error("密码错误");
+    appUnlocked = true;
+    return { ok: true };
+  });
+  secureHandle("auth:logout", () => {
+    appUnlocked = false;
+    return { ok: true };
+  });
+  secureHandleProtected("auth:change-password", (_event, payload) => {
+    return changeAppPassword(String(payload?.oldPassword || ""), String(payload?.newPassword || ""));
+  });
 
-  secureHandle("trade:create", (_event, payload) => createTrade(payload));
-  secureHandle("trade:create-bulk", (_event, payload) => createTradesBulk(payload?.rows));
-  secureHandle("trade:update", (_event, payload) => updateTrade(payload));
-  secureHandle("trade:delete", (_event, payload) => deleteTrade(payload?.id));
-  secureHandle("trade:clear-all", (_event, payload) => clearAllTrades(payload?.confirmText));
-  secureHandle("trade:list", () => listTrades());
-  secureHandle("summary:get", () => computeSummary());
-  secureHandle("summary:matches", () => listSellMatches());
+  secureHandleProtected("settings:get", () => getSettings());
+  secureHandleProtected("settings:save", (_event, payload) => saveSettings(payload));
 
-  secureHandle("ai:extract", async (_event, payload) => {
+  secureHandleProtected("trade:create", (_event, payload) => createTrade(payload));
+  secureHandleProtected("trade:create-bulk", (_event, payload) => createTradesBulk(payload?.rows));
+  secureHandleProtected("trade:update", (_event, payload) => updateTrade(payload));
+  secureHandleProtected("trade:delete", (_event, payload) => deleteTrade(payload?.id));
+  secureHandleProtected("trade:clear-all", (_event, payload) => clearAllTrades(payload?.confirmText));
+  secureHandleProtected("trade:list", () => listTrades());
+  secureHandleProtected("summary:get", () => computeSummary());
+  secureHandleProtected("summary:matches", () => listSellMatches());
+
+  secureHandleProtected("ai:extract", async (_event, payload) => {
     return parseImageWithAI(payload);
   });
-  secureHandle("ai:extract-file", async (_event, payload) => {
+  secureHandleProtected("ai:extract-file", async (_event, payload) => {
     return parseFileWithAI(payload);
   });
 
-  secureHandle("stock:poll", async (_event, payload) => {
+  secureHandleProtected("stock:poll", async (_event, payload) => {
     const code = String(payload?.code || "").trim();
     const period = String(payload?.period || "day");
     if (!code) throw new Error("缺少股票代码");
@@ -143,7 +176,7 @@ app.whenReady().then(() => {
     return data;
   });
 
-  secureHandle("stock:timeline", async (_event, payload) => {
+  secureHandleProtected("stock:timeline", async (_event, payload) => {
     const code = String(payload?.code || "").trim();
     const period = String(payload?.period || "day");
     if (!code) throw new Error("缺少股票代码");
@@ -155,11 +188,11 @@ app.whenReady().then(() => {
     return data.kline || [];
   });
 
-  secureHandle("stock:search", async (_event, payload) => {
+  secureHandleProtected("stock:search", async (_event, payload) => {
     return searchStocks(String(payload?.keyword || ""));
   });
 
-  secureHandle("ai:analyze", async (_event, payload) => {
+  secureHandleProtected("ai:analyze", async (_event, payload) => {
     const code = String(payload?.code || "").trim();
     const requestedName = String(payload?.name || "").trim();
     const analysisType = String(payload?.analysisType || "f10");
@@ -274,15 +307,15 @@ app.whenReady().then(() => {
     return output;
   });
 
-  secureHandle("ai:reports", (_event, payload) => {
+  secureHandleProtected("ai:reports", (_event, payload) => {
     return listAiReports(String(payload?.code || ""));
   });
 
-  secureHandle("ai:report-delete", (_event, payload) => {
+  secureHandleProtected("ai:report-delete", (_event, payload) => {
     return deleteAiReport(payload?.id);
   });
 
-  secureHandle("backup:export-json", async () => {
+  secureHandleProtected("backup:export-json", async () => {
     const backup = exportBackupData();
     const fileName = `stock-backup-${localDateTimeStamp()}.json`;
     const saveRes = await dialog.showSaveDialog(mainWindow, {
@@ -295,7 +328,7 @@ app.whenReady().then(() => {
     return { ok: true, canceled: false, filePath: saveRes.filePath };
   });
 
-  secureHandle("backup:import-json", async (_event, payload) => {
+  secureHandleProtected("backup:import-json", async (_event, payload) => {
     const mode = String(payload?.mode || "merge").trim().toLowerCase() === "replace" ? "replace" : "merge";
     const overwriteSecrets = Boolean(payload?.overwriteSecrets);
     const openRes = await dialog.showOpenDialog(mainWindow, {

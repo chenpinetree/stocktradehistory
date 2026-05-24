@@ -81,3 +81,19 @@ docker compose up -d
 - 当前阶段: **不自动迁移** 旧本机数据库到容器。
 - 旧数据将继续保留在原本机位置。
 - 需要迁移时，可后续手工将旧 `trade-history.db` 拷贝到容器数据卷对应目录。
+
+## 主密码与忘记密码重置
+
+- 应用支持单一主密码，首次进入时设置，后续需解锁后才能访问交易与设置。
+- 密码以哈希形式保存，不存明文。
+
+忘记密码时，可在数据库执行下列 SQL 重置（不会删除交易数据）：
+
+```sql
+UPDATE app_settings
+SET app_lock_enabled = 0,
+    app_password_hash = NULL,
+    app_password_salt = NULL,
+    updated_at = datetime('now')
+WHERE id = 1;
+```

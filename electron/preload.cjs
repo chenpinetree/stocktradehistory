@@ -1,6 +1,11 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 const api = {
+  authStatus: () => ipcRenderer.invoke("auth:status"),
+  setupPassword: (payload) => ipcRenderer.invoke("auth:setup", payload),
+  login: (payload) => ipcRenderer.invoke("auth:login", payload),
+  logout: () => ipcRenderer.invoke("auth:logout"),
+  changePassword: (payload) => ipcRenderer.invoke("auth:change-password", payload),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   saveSettings: (payload) => ipcRenderer.invoke("settings:save", payload),
   createTrade: (payload) => ipcRenderer.invoke("trade:create", payload),

@@ -39,6 +39,13 @@ body {
   padding: 24px 28px;
 }
 
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
 .summary-row {
   margin-bottom: 16px;
 }
@@ -251,6 +258,11 @@ body {
     padding: 16px;
   }
 
+  .page-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
   .filter-control,
   .filter-control-xs,
   .filter-control-sm,
@@ -264,12 +276,80 @@ body {
     grid-template-columns: 1fr;
   }
 
+  .quote-chart {
+    height: 320px;
+  }
+
   .quote-price {
     font-size: 26px;
   }
 
   .quote-change {
     font-size: 20px;
+  }
+}
+
+@media (max-width: 768px) {
+  .page {
+    padding: 12px;
+  }
+
+  .page-title {
+    font-size: 24px !important;
+    margin-bottom: 0 !important;
+  }
+
+  .quote-header {
+    padding: 14px;
+  }
+
+  .quote-price {
+    font-size: 22px;
+  }
+
+  .quote-change {
+    font-size: 16px;
+  }
+
+  .quote-metrics-row {
+    padding: 12px 14px;
+  }
+
+  .quote-chart {
+    height: 260px;
+  }
+
+  .quote-chart-col,
+  .quote-orderbook-col {
+    padding: 10px;
+    border-right: none;
+  }
+
+  .analysis-content {
+    font-size: 14px;
+    line-height: 1.6;
+  }
+}
+
+@media (max-width: 480px) {
+  .page-title {
+    font-size: 20px !important;
+  }
+
+  .quote-symbol {
+    font-size: 14px;
+  }
+
+  .quote-price {
+    font-size: 20px;
+  }
+
+  .quote-change {
+    font-size: 14px;
+  }
+
+  .quote-chart {
+    height: 220px;
   }
 }
 

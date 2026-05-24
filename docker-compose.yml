@@ -8,8 +8,5 @@ services:
       - PORT=3737
       - APP_DATA_DIR=/app/data
     volumes:
-      - stocktradehistory_data:/app/data
+      - /volume1/docker/stocktradehistory/data:/app/data
     restart: unless-stopped
-
-volumes:
-  stocktradehistory_data:

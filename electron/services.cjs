@@ -1,6 +1,7 @@
 const Database = require("better-sqlite3");
 const XLSX = require("xlsx");
 const iconv = require("iconv-lite");
+const crypto = require("node:crypto");
 
 let db;
 const CLEAR_ALL_TRADES_CONFIRM_TEXT = "我确定清除所有交易记录";
@@ -17,6 +18,9 @@ function initDb(dbPath) {
       ai_model TEXT,
       ai_profiles_json TEXT,
       active_ai_profile_id TEXT,
+      app_lock_enabled INTEGER NOT NULL DEFAULT 0,
+      app_password_hash TEXT,
+      app_password_salt TEXT,
       updated_at TEXT NOT NULL
     );
 
@@ -66,6 +70,15 @@ function initDb(dbPath) {
     db.prepare("ALTER TABLE app_settings ADD COLUMN active_ai_profile_id TEXT").run();
   } catch (_e) {}
   try {
+    db.prepare("ALTER TABLE app_settings ADD COLUMN app_lock_enabled INTEGER NOT NULL DEFAULT 0").run();
+  } catch (_e) {}
+  try {
+    db.prepare("ALTER TABLE app_settings ADD COLUMN app_password_hash TEXT").run();
+  } catch (_e) {}
+  try {
+    db.prepare("ALTER TABLE app_settings ADD COLUMN app_password_salt TEXT").run();
+  } catch (_e) {}
+  try {
     db.prepare("ALTER TABLE trades ADD COLUMN trade_no TEXT").run();
   } catch (_e) {}
   try {
@@ -84,6 +97,60 @@ function initDb(dbPath) {
   normalizeFeesByRules();
   rebuildSellMatches();
   normalizeSellMatchFees();
+}
+
+function scryptHash(password, salt) {
+  return crypto.scryptSync(String(password), String(salt), 64).toString("hex");
+}
+
+function hasAppPassword() {
+  const row = db.prepare("SELECT app_lock_enabled, app_password_hash, app_password_salt FROM app_settings WHERE id = 1").get();
+  return Boolean(row && Number(row.app_lock_enabled) === 1 && row.app_password_hash && row.app_password_salt);
+}
+
+function setupAppPassword(password) {
+  const pwd = String(password || "");
+  if (pwd.length < 6) throw new Error("密码至少 6 位");
+  if (hasAppPassword()) throw new Error("主密码已设置");
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = scryptHash(pwd, salt);
+  db.prepare("UPDATE app_settings SET app_lock_enabled = 1, app_password_hash = ?, app_password_salt = ?, updated_at = ? WHERE id = 1").run(hash, salt, now());
+  return { ok: true };
+}
+
+function verifyAppPassword(password) {
+  const row = db.prepare("SELECT app_lock_enabled, app_password_hash, app_password_salt FROM app_settings WHERE id = 1").get();
+  if (!row || Number(row.app_lock_enabled) !== 1 || !row.app_password_hash || !row.app_password_salt) {
+    throw new Error("主密码未设置");
+  }
+  const incoming = scryptHash(String(password || ""), row.app_password_salt);
+  const expected = String(row.app_password_hash);
+  const incomingBuf = Buffer.from(incoming, "hex");
+  const expectedBuf = Buffer.from(expected, "hex");
+  if (incomingBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(incomingBuf, expectedBuf)) {
+    return false;
+  }
+  return true;
+}
+
+function changeAppPassword(oldPassword, newPassword) {
+  if (!verifyAppPassword(oldPassword)) {
+    throw new Error("旧密码错误");
+  }
+  const pwd = String(newPassword || "");
+  if (!pwd) {
+    return clearAppPasswordLock();
+  }
+  if (pwd.length < 6) throw new Error("新密码至少 6 位");
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = scryptHash(pwd, salt);
+  db.prepare("UPDATE app_settings SET app_password_hash = ?, app_password_salt = ?, updated_at = ? WHERE id = 1").run(hash, salt, now());
+  return { ok: true };
+}
+
+function clearAppPasswordLock() {
+  db.prepare("UPDATE app_settings SET app_lock_enabled = 0, app_password_hash = NULL, app_password_salt = NULL, updated_at = ? WHERE id = 1").run(now());
+  return { ok: true };
 }
 
 function round2(n) {
@@ -266,12 +333,15 @@ function getSettings(includeSecrets = false) {
     ...row,
     ai_profiles,
     active_ai_profile_id: row.active_ai_profile_id || "",
+    app_lock_enabled: Number(row.app_lock_enabled || 0),
   };
 
   if (!includeSecrets) {
     out.ai_api_key = "";
     out.ai_profiles = ai_profiles.map((p) => ({ ...p, api_key: "" }));
   }
+  delete out.app_password_hash;
+  delete out.app_password_salt;
   return out;
 }
 
@@ -1194,4 +1264,9 @@ module.exports = {
   deleteAiReport,
   exportBackupData,
   importBackupData,
+  hasAppPassword,
+  setupAppPassword,
+  verifyAppPassword,
+  changeAppPassword,
+  clearAppPasswordLock,
 };
