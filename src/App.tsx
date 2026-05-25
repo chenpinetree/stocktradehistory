@@ -229,6 +229,15 @@ function toNum(v: unknown) {
   return Number(v as number);
 }
 
+function normalizeAiExtractRows(result: unknown) {
+  if (Array.isArray(result)) return result as AiRow[];
+  if (result && typeof result === "object" && "rows" in result) {
+    const rows = (result as { rows?: unknown }).rows;
+    if (Array.isArray(rows)) return rows as AiRow[];
+  }
+  return [] as AiRow[];
+}
+
 function App() {
   const [settings, setSettings] = useState<Settings>({ initial_capital: 0, ai_base_url: "", ai_api_key: "", ai_model: "", ai_profiles: [], active_ai_profile_id: "" });
   const [trades, setTrades] = useState<Trade[]>([]);
@@ -852,7 +861,11 @@ function App() {
       reader.onload = async () => {
         try {
           const imageData = String(reader.result);
-          const rows = await getApi().extractFromImage({ imageData });
+          const raw = await getApi().extractFromImage({ imageData });
+          const rows = normalizeAiExtractRows(raw);
+          if (!Array.isArray(raw) && !(raw && typeof raw === "object" && "rows" in raw)) {
+            message.warning("识别结果格式异常，已按空结果处理");
+          }
           setAiRows(rows);
           message.success(`识别完成，共 ${rows.length} 条`);
         } catch (e) {
@@ -876,7 +889,11 @@ function App() {
         try {
           const dataUrl = String(reader.result || "");
           const base64Data = dataUrl.split(",")[1] || "";
-          const rows = await getApi().extractFromFile({ fileName: file.name, base64Data });
+          const raw = await getApi().extractFromFile({ fileName: file.name, base64Data });
+          const rows = normalizeAiExtractRows(raw);
+          if (!Array.isArray(raw) && !(raw && typeof raw === "object" && "rows" in raw)) {
+            message.warning("识别结果格式异常，已按空结果处理");
+          }
           setAiRows(rows);
           message.success(`文件识别完成，共 ${rows.length} 条`);
         } catch (e) {
@@ -903,7 +920,11 @@ function App() {
         reader.onload = async () => {
           try {
             const imageData = String(reader.result);
-            const rows = await getApi().extractFromImage({ imageData });
+            const raw = await getApi().extractFromImage({ imageData });
+            const rows = normalizeAiExtractRows(raw);
+            if (!Array.isArray(raw) && !(raw && typeof raw === "object" && "rows" in raw)) {
+              message.warning("识别结果格式异常，已按空结果处理");
+            }
             setAiRows(rows);
             message.success(`粘贴识别完成，共 ${rows.length} 条`);
           } catch (e) {
