@@ -302,10 +302,44 @@ test("parseImageWithAI throws clear error when fetch response is not ok", async 
   });
 
   try {
-    await assert.rejects(
-      () => parseImageWithAI({ imageData: "data:image/png;base64,abc" }),
-      /AI 请求失败: 503 service unavailable/
-    );
+    await assert.rejects(() => parseImageWithAI({ imageData: "data:image/png;base64,abc" }), (err) => {
+      assert.equal(err.code, "AI_UPSTREAM_BAD_RESPONSE");
+      assert.match(err.message, /AI 请求失败: 503/);
+      assert.equal(err.statusCode, 502);
+      return true;
+    });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("parseImageWithAI maps network errors to structured AI error", async () => {
+  const dbPath = makeTempDb();
+  initDb(dbPath);
+
+  saveSettings({
+    initial_capital: 0,
+    ai_base_url: "https://api.example.com/v1",
+    ai_api_key: "test-key",
+    ai_model: "test-model",
+    ai_profiles: [{ id: "p1", name: "P1", base_url: "https://api.example.com/v1", api_key: "test-key", model: "test-model" }],
+    active_ai_profile_id: "p1",
+  });
+
+  const originalFetch = global.fetch;
+  global.fetch = async () => {
+    const err = new TypeError("fetch failed");
+    err.cause = { code: "ECONNRESET" };
+    throw err;
+  };
+
+  try {
+    await assert.rejects(() => parseImageWithAI({ imageData: "data:image/png;base64,abc" }), (err) => {
+      assert.equal(err.code, "AI_UPSTREAM_FETCH_FAILED");
+      assert.equal(err.statusCode, 502);
+      assert.equal(err.retryable, true);
+      return true;
+    });
   } finally {
     global.fetch = originalFetch;
   }

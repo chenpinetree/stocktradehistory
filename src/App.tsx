@@ -235,7 +235,22 @@ function normalizeAiExtractRows(result: unknown) {
     const rows = (result as { rows?: unknown }).rows;
     if (Array.isArray(rows)) return rows as AiRow[];
   }
-  return [] as AiRow[];
+  throw new Error("AI 返回格式异常：缺少 rows 数组");
+}
+
+function aiErrorMessage(err: unknown) {
+  const msg = err instanceof Error ? err.message : String(err || "识别失败");
+  const code = typeof err === "object" && err && "code" in err ? String((err as { code?: unknown }).code || "") : "";
+  if (code === "AI_UPSTREAM_FETCH_FAILED" || code === "AI_UPSTREAM_TIMEOUT") {
+    return "AI 服务不可达，请检查 NAS 到 AI 主机网络及 Base URL 配置";
+  }
+  if (code === "AI_CONFIG_INVALID") {
+    return "AI 配置不完整，请检查 Base URL / API Key / Model";
+  }
+  if (code === "AI_PARSE_FAILED") {
+    return "AI 返回格式不符合要求，请更换模型或调整提示词";
+  }
+  return msg;
 }
 
 function App() {
@@ -863,13 +878,10 @@ function App() {
           const imageData = String(reader.result);
           const raw = await getApi().extractFromImage({ imageData });
           const rows = normalizeAiExtractRows(raw);
-          if (!Array.isArray(raw) && !(raw && typeof raw === "object" && "rows" in raw)) {
-            message.warning("识别结果格式异常，已按空结果处理");
-          }
           setAiRows(rows);
           message.success(`识别完成，共 ${rows.length} 条`);
         } catch (e) {
-          message.error(String(e));
+          message.error(aiErrorMessage(e));
         } finally {
           setUploading(false);
         }
@@ -891,13 +903,10 @@ function App() {
           const base64Data = dataUrl.split(",")[1] || "";
           const raw = await getApi().extractFromFile({ fileName: file.name, base64Data });
           const rows = normalizeAiExtractRows(raw);
-          if (!Array.isArray(raw) && !(raw && typeof raw === "object" && "rows" in raw)) {
-            message.warning("识别结果格式异常，已按空结果处理");
-          }
           setAiRows(rows);
           message.success(`文件识别完成，共 ${rows.length} 条`);
         } catch (e) {
-          message.error(String(e));
+          message.error(aiErrorMessage(e));
         } finally {
           setFileUploading(false);
         }
@@ -922,13 +931,10 @@ function App() {
             const imageData = String(reader.result);
             const raw = await getApi().extractFromImage({ imageData });
             const rows = normalizeAiExtractRows(raw);
-            if (!Array.isArray(raw) && !(raw && typeof raw === "object" && "rows" in raw)) {
-              message.warning("识别结果格式异常，已按空结果处理");
-            }
             setAiRows(rows);
             message.success(`粘贴识别完成，共 ${rows.length} 条`);
           } catch (e) {
-            message.error(String(e));
+            message.error(aiErrorMessage(e));
           } finally {
             setUploading(false);
           }

@@ -23,6 +23,30 @@ function errText(payload: unknown) {
   return "请求失败";
 }
 
+function errCode(payload: unknown) {
+  if (payload && typeof payload === "object" && "code" in payload) {
+    return String((payload as { code: unknown }).code || "");
+  }
+  return "";
+}
+
+function errDetail(payload: unknown) {
+  if (payload && typeof payload === "object" && "detail" in payload) {
+    return String((payload as { detail: unknown }).detail || "");
+  }
+  return "";
+}
+
+function createApiError(payload: unknown) {
+  const message = errText(payload);
+  const error = new Error(message) as Error & { code?: string; detail?: string };
+  const code = errCode(payload);
+  const detail = errDetail(payload);
+  if (code) error.code = code;
+  if (detail) error.detail = detail;
+  return error;
+}
+
 async function post(path: string, payload?: JsonValue) {
   const token = getSessionToken();
   const res = await fetch(path, {
@@ -34,7 +58,7 @@ async function post(path: string, payload?: JsonValue) {
     body: JSON.stringify(payload || {}),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(errText(data));
+  if (!res.ok) throw createApiError(data);
   return data;
 }
 
@@ -44,7 +68,7 @@ async function get(path: string) {
     headers: token ? { "x-app-session": token } : {},
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(errText(data));
+  if (!res.ok) throw createApiError(data);
   return data;
 }
 

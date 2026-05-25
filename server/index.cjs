@@ -228,8 +228,36 @@ async function handleApi(req, res, urlObj) {
   if (p === "/api/summary/get" && req.method === "GET") return json(res, 200, computeSummary());
   if (p === "/api/summary/matches" && req.method === "GET") return json(res, 200, listSellMatches());
 
-  if (p === "/api/ai/extract" && req.method === "POST") return json(res, 200, parseImageWithAI(await readJsonBody(req)));
-  if (p === "/api/ai/extract-file" && req.method === "POST") return json(res, 200, parseFileWithAI(await readJsonBody(req)));
+  if (p === "/api/ai/extract" && req.method === "POST") {
+    try {
+      const rows = await parseImageWithAI(await readJsonBody(req));
+      return json(res, 200, { rows });
+    } catch (e) {
+      const statusCode = Number(e?.statusCode || 500);
+      return json(res, statusCode, {
+        error: e instanceof Error ? e.message : String(e),
+        code: String(e?.code || "AI_EXTRACT_FAILED"),
+        detail: String(e?.detail || ""),
+        retryable: Boolean(e?.retryable),
+      });
+    }
+  }
+  if (p === "/api/ai/extract-file" && req.method === "POST") {
+    try {
+      const rows = parseFileWithAI(await readJsonBody(req));
+      return json(res, 200, { rows });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      const statusCode = Number(e?.statusCode || 422);
+      const code = String(e?.code || "AI_FILE_PARSE_FAILED");
+      return json(res, statusCode, {
+        error: message,
+        code,
+        detail: String(e?.detail || ""),
+        retryable: Boolean(e?.retryable),
+      });
+    }
+  }
   if (p === "/api/ai/reports" && req.method === "POST") {
     const body = await readJsonBody(req);
     return json(res, 200, listAiReports(String(body?.code || "")));

@@ -788,14 +788,104 @@ function listSellMatches() {
     .all();
 }
 
+class AIServiceError extends Error {
+  constructor(code, message, options = {}) {
+    super(message);
+    this.name = "AIServiceError";
+    this.code = code;
+    this.statusCode = Number(options.statusCode || 500);
+    this.retryable = Boolean(options.retryable);
+    this.detail = options.detail ? String(options.detail) : "";
+  }
+}
+
+function makeAIError(code, message, options = {}) {
+  return new AIServiceError(code, message, options);
+}
+
+function toErrorMessage(err) {
+  if (err instanceof Error) return err.message;
+  return String(err || "unknown");
+}
+
+function mapAiNetworkError(err, endpoint) {
+  const code = String(err?.cause?.code || err?.code || "").trim();
+  const name = String(err?.name || "").trim();
+  const msg = toErrorMessage(err);
+  const baseDetail = `${code || name || "ERR"}: ${msg}`;
+  if (name === "AbortError") {
+    return makeAIError("AI_UPSTREAM_TIMEOUT", "AI 服务响应超时，请稍后重试", {
+      statusCode: 504,
+      retryable: true,
+      detail: `${baseDetail}; endpoint=${endpoint}`,
+    });
+  }
+  return makeAIError("AI_UPSTREAM_FETCH_FAILED", "AI 服务连接失败，请检查网络或 Base URL", {
+    statusCode: 502,
+    retryable: ["ECONNRESET", "ETIMEDOUT", "ENOTFOUND", "ECONNREFUSED", "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT"].includes(code) || !code,
+    detail: `${baseDetail}; endpoint=${endpoint}`,
+  });
+}
+
+async function requestAIChatCompletions(profile, body) {
+  const endpoint = `${profile.base_url.replace(/\/$/, "")}/chat/completions`;
+  const maxAttempts = 2;
+  const timeoutMs = 20000;
+  let lastErr = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${profile.api_key}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw makeAIError("AI_UPSTREAM_BAD_RESPONSE", `AI 请求失败: ${res.status}`, {
+          statusCode: 502,
+          retryable: res.status >= 500 || res.status === 429,
+          detail: text.slice(0, 500),
+        });
+      }
+
+      const out = await res.json().catch(() => {
+        throw makeAIError("AI_UPSTREAM_BAD_RESPONSE", "AI 返回不是有效 JSON", {
+          statusCode: 502,
+          retryable: false,
+        });
+      });
+      return out;
+    } catch (err) {
+      const normalized = err instanceof AIServiceError ? err : mapAiNetworkError(err, endpoint);
+      lastErr = normalized;
+      if (attempt < maxAttempts && normalized.retryable) {
+        continue;
+      }
+      throw normalized;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  throw lastErr || makeAIError("AI_UNKNOWN", "AI 请求失败", { statusCode: 500 });
+}
+
 async function parseImageWithAI(payload) {
   const imageData = String(payload?.imageData || "").trim();
-  if (!imageData) throw new Error("缺少图片数据");
+  if (!imageData) throw makeAIError("AI_PAYLOAD_INVALID", "缺少图片数据", { statusCode: 400, retryable: false });
 
   const settings = getSettings(true);
   const profile = resolveActiveProfile(settings);
   if (!profile.base_url || !profile.api_key || !profile.model) {
-    throw new Error("请先在设置里填写 AI Base URL、API Key 和 Model");
+    throw makeAIError("AI_CONFIG_INVALID", "请先在设置里填写 AI Base URL、API Key 和 Model", { statusCode: 400, retryable: false });
   }
 
   const prompt = `你是交易记录提取助手。请从图片中提取交易记录，并严格返回 JSON：\n{
@@ -811,45 +901,43 @@ async function parseImageWithAI(payload) {
   }]
 }\n仅输出 JSON，不要输出其他文字。`;
 
-  const res = await fetch(`${profile.base_url.replace(/\/$/, "")}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${profile.api_key}`,
-    },
-    body: JSON.stringify({
-      model: profile.model,
-      temperature: 0,
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: prompt },
-            {
-              type: "image_url",
-                image_url: {
-                  url: imageData,
-                },
-              },
-            ],
-        },
-      ],
-    }),
+  const data = await requestAIChatCompletions(profile, {
+    model: profile.model,
+    temperature: 0,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: prompt },
+          {
+            type: "image_url",
+            image_url: {
+              url: imageData,
+            },
+          },
+        ],
+      },
+    ],
   });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`AI 请求失败: ${res.status} ${text}`);
-  }
-
-  const data = await res.json();
   const content = data.choices?.[0]?.message?.content;
   const contentText = Array.isArray(content)
     ? content.map((c) => (typeof c === "string" ? c : c?.text || "")).join("\n")
     : String(content || "");
-  const parsed = parsePossiblyFencedJson(contentText);
+  let parsed;
+  try {
+    parsed = parsePossiblyFencedJson(contentText);
+  } catch (err) {
+    throw makeAIError("AI_PARSE_FAILED", "AI 返回不是可解析的 JSON", {
+      statusCode: 422,
+      retryable: false,
+      detail: toErrorMessage(err),
+    });
+  }
   if (!Array.isArray(parsed.rows)) {
-    throw new Error("AI 返回格式不正确");
+    throw makeAIError("AI_PARSE_FAILED", "AI 返回格式不正确：缺少 rows 数组", {
+      statusCode: 422,
+      retryable: false,
+    });
   }
   return normalizeAiRows(parsed.rows);
 }
