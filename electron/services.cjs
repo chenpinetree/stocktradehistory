@@ -422,7 +422,7 @@ function rebuildSellMatches() {
       }
 
       if (remainingSellQty > 0) {
-        throw new Error("可卖数量不足，无法完成卖出");
+        // allow SELL to remain unmatched rather than rejecting the whole batch
       }
     }
   });
@@ -830,7 +830,7 @@ function mapAiNetworkError(err, endpoint) {
 async function requestAIChatCompletions(profile, body) {
   const endpoint = `${profile.base_url.replace(/\/$/, "")}/chat/completions`;
   const maxAttempts = 2;
-  const timeoutMs = 20000;
+  const timeoutMs = 120000;
   let lastErr = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
